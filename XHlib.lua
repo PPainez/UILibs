@@ -53,7 +53,8 @@ local PALETTE = {
 	popup = Color3.fromRGB(24, 28, 37),
 	control = Color3.fromRGB(30, 35, 46),
 	controlHover = Color3.fromRGB(43, 49, 64),
-	stroke = Color3.fromRGB(44, 50, 65),
+	stroke = Color3.fromRGB(44, 50, 65), -- structure: window, sections, popups
+	controlStroke = Color3.fromRGB(90, 99, 120), -- 3:1 on section bg, so empty controls stay visible
 	text = Color3.fromRGB(245, 247, 255),
 	textOn = Color3.fromRGB(215, 220, 230),
 	textOff = Color3.fromRGB(160, 166, 180),
@@ -67,7 +68,7 @@ local TEXT_SIZE = 15
 local library = {
 	__xanhub = true,
 	brand = "xanhub",
-	version = "4.0.0",
+	version = "4.0.1",
 	design = "xanhub",
 	tabs = {},
 	draggable = true,
@@ -935,7 +936,7 @@ local function field(class, properties)
 	properties.BorderSizePixel = 0
 	local object = library:Create(class, properties)
 	corner(object, 3)
-	return object, stroke(object)
+	return object, stroke(object, PALETTE.controlStroke)
 end
 
 local function label(properties)
@@ -1002,7 +1003,7 @@ local function bindHover(object, outline, keepLit)
 	end)
 	object.InputEnded:Connect(function(input)
 		if isMove(input) and not (keepLit and keepLit()) then
-			fadeColor(outline, "Color", PALETTE.stroke, 0.15)
+			fadeColor(outline, "Color", PALETTE.controlStroke, 0.15)
 		end
 	end)
 end
@@ -1197,7 +1198,7 @@ library.createToggle = function(option, parent)
 		Parent = option.main,
 	})
 	corner(box, round)
-	local boxStroke = stroke(box)
+	local boxStroke = stroke(box, PALETTE.controlStroke)
 
 	local fill = library:Create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1518,7 +1519,7 @@ library.createSlider = function(option, parent)
 		end
 	end)
 	option.title.FocusLost:Connect(function()
-		fadeColor(outline, "Color", PALETTE.stroke, 0.15)
+		fadeColor(outline, "Color", PALETTE.controlStroke, 0.15)
 		if manualInput and tonumber(option.title.Text) then
 			option:SetValue(tonumber(option.title.Text))
 		else
@@ -1608,7 +1609,7 @@ library.createList = function(option, parent)
 				table.insert(picked, tostring(value))
 			end
 		end
-		return #picked > 0 and table.concat(picked, ", ") or "-"
+		return #picked > 0 and table.concat(picked, ", ") or ""
 	end
 
 	local outline
@@ -1697,7 +1698,11 @@ library.createList = function(option, parent)
 			item.TextColor3 = on and accent or PALETTE.textOn
 			item.BackgroundTransparency = on and 0.85 or 1
 		end
-		option.listvalue.Text = option.multiselect and multiText() or tostring(option.value)
+		local text = option.multiselect and multiText() or tostring(option.value)
+		-- Empty reads as a muted hint, not a blank box. option.placeholder overrides.
+		local empty = text == ""
+		option.listvalue.Text = empty and (option.placeholder or (#option.values == 0 and "Nothing to pick yet" or "None selected")) or text
+		option.listvalue.TextColor3 = empty and PALETTE.textOff or PALETTE.text
 	end
 	option.refresh = paint
 
@@ -1816,7 +1821,7 @@ library.createList = function(option, parent)
 		library:ClosePopup(self)
 		self.arrow.Rotation = 90
 		self.holder.Visible = false
-		fadeColor(outline, "Color", PALETTE.stroke, 0.15)
+		fadeColor(outline, "Color", PALETTE.controlStroke, 0.15)
 	end
 
 	for i, value in next, option.values do
@@ -1879,7 +1884,7 @@ library.createBox = function(option, parent)
 		inputvalue.CursorPosition = #inputvalue.Text + 1
 	end)
 	inputvalue.FocusLost:Connect(function(enter)
-		fadeColor(outline, "Color", PALETTE.stroke, 0.15)
+		fadeColor(outline, "Color", PALETTE.controlStroke, 0.15)
 		option:SetValue(inputvalue.Text, enter)
 	end)
 	bindHover(inputvalue, outline, function()
@@ -2225,7 +2230,7 @@ library.createColor = function(option, parent)
 		if self.mainHolder then
 			self.mainHolder.Visible = false
 		end
-		fadeColor(outline, "Color", PALETTE.stroke, 0.15)
+		fadeColor(outline, "Color", PALETTE.controlStroke, 0.15)
 	end
 
 	task.defer(function()
@@ -2480,15 +2485,6 @@ function library:AddTab(title, pos)
 					Parent = self.main,
 				})
 
-				library:AddThemeObject(library:Create("Frame", {
-					AnchorPoint = Vector2.new(0.5, 0),
-					Position = UDim2.fromScale(0.5, 0),
-					Size = UDim2.new(1, -8, 0, 1),
-					BackgroundColor3 = library:GetAccent(),
-					BorderSizePixel = 0,
-					Parent = self.main,
-				}))
-
 				local layout = library:Create("UIListLayout", {
 					HorizontalAlignment = Enum.HorizontalAlignment.Center,
 					SortOrder = Enum.SortOrder.LayoutOrder,
@@ -2725,6 +2721,13 @@ function library:AddWarning(warning)
 		warning:Close()
 		library.warning = nil
 		return result
+	end
+
+	-- Escape counts as "No" (or "OK" on a plain notice).
+	function warning:Dismiss()
+		if answer == nil then
+			answer = warning.type ~= "confirm"
+		end
 	end
 
 	function warning:Close()
@@ -3230,11 +3233,22 @@ function library:Init()
 				dragInput = input
 			end
 		end)
+		self:AddConnection(inputService.InputBegan, "EscapeDismiss", function(input)
+			if input.KeyCode ~= Enum.KeyCode.Escape or self.capturingKey or inputService:GetFocusedTextBox() then
+				return
+			end
+			if self.warning and self.warning.Dismiss then
+				self.warning:Dismiss()
+			elseif self.popup then
+				self.popup:Close()
+			end
+		end)
+
 		self:AddConnection(inputService.InputEnded, function(input)
 			if isClick(input) then
 				dragging = false
 				if self.slider then
-					fadeColor(self.slider.outline, "Color", PALETTE.stroke, 0.15)
+					fadeColor(self.slider.outline, "Color", PALETTE.controlStroke, 0.15)
 					self.slider = nil
 				end
 			end
@@ -3442,7 +3456,7 @@ if library.capabilities.filesystem then
 		library:SendNotification(2, ok and ("Created config " .. library:NormalizeConfigName(library.flags["Config Name"])) or ("Create failed: " .. tostring(err)))
 	end})
 	library.ConfigWarning = library:AddWarning({type = "confirm"})
-	library.ConfigSection:AddList({text = "Configs", skipflag = true, value = "", flag = "Config List", values = library:GetConfigs()})
+	library.ConfigSection:AddList({text = "Configs", skipflag = true, value = "", flag = "Config List", values = library:GetConfigs(), placeholder = "No configs yet"})
 	library.ConfigSection:AddButton({text = "Save", callback = function()
 		local name = library:ResolveConfigName(library.flags["Config List"])
 		if name == "" then
