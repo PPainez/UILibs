@@ -68,7 +68,7 @@ local TEXT_SIZE = 15
 local library = {
 	__xanhub = true,
 	brand = "xanhub",
-	version = "4.1.0",
+	version = "4.1.1",
 	design = "xanhub",
 	tabs = {},
 	draggable = true,
@@ -102,6 +102,7 @@ local library = {
 	enableTweens = false,
 	animations = true,
 	intro = true, -- logo intro on Init; set false before Init to skip
+	reducedMotion = nil, -- nil follows Roblox's Reduced Motion setting; true/false forces it
 	soundsEnabled = true,
 	soundVolume = 0.35,
 	-- Ids from Morioh-Mini. One asset can serve two kinds at different pitch.
@@ -2880,8 +2881,10 @@ end
 -- Splash on execute. The brand types out over a dimmed screen with an accent
 -- rule drawing under it, then the logo itself flies into the menu's title
 -- slot as the window rises: the splash becomes the menu instead of fading off.
--- ~1.5s, click to skip, non-blocking (Init has already returned).
--- Roblox's Reduced Motion setting gets a still logo and a crossfade instead.
+-- ~1.5s, non-blocking (Init has already returned). Any click, tap, Escape,
+-- Enter or Space skips it; clicks still reach the game, so a player mid-fight
+-- is never eaten by the splash. Reduced motion (Roblox's setting, or
+-- library.reducedMotion = true) gets a still logo and a crossfade instead.
 function library:PlayIntro()
 	local main = self.main
 	if not main then
@@ -2892,19 +2895,25 @@ function library:PlayIntro()
 		return
 	end
 
-	local reduced = false
-	pcall(function()
-		reduced = game:GetService("GuiService").ReducedMotionEnabled == true
-	end)
+	local reduced = self.reducedMotion
+	if reduced == nil then
+		reduced = false
+		pcall(function()
+			reduced = game:GetService("GuiService").ReducedMotionEnabled == true
+		end)
+	end
 
-	local overlay = self:Create("TextButton", {
+	-- 75% black: the worst case (a white sky) lands near #404040, where the
+	-- subtitle reads 4.96:1 and the accent "xan" 4.05:1 (56px = large text).
+	local DIM = 0.75
+
+	-- A plain Frame is not Active, so input passes through it to the game.
+	local overlay = self:Create("Frame", {
 		ZIndex = 50,
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = Color3.new(0, 0, 0),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		AutoButtonColor = false,
-		Text = "",
 		Parent = self.base,
 	})
 	if not overlay then
@@ -2915,12 +2924,16 @@ function library:PlayIntro()
 
 	-- Same face as the window title, so the landing is a seamless swap.
 	local LOGO_FONT = Enum.Font.GothamSemibold
+	-- 56px reads as a mark on a 1080p screen without crowding it; 16px is the
+	-- window title's size, where the logo has to land.
 	local START_SIZE, END_SIZE = 56, 16
 	local screen = self.base.AbsoluteSize
 	local startWidth = textService:GetTextSize(self.brand, START_SIZE, LOGO_FONT, Vector2.new(9e9, 9e9)).X
 	local startLeft = math.floor(screen.X / 2 - startWidth / 2)
+	-- Lifted 0.3 of a line so logo, rule and subtitle together sit centered.
 	local startY = math.floor(screen.Y / 2 - START_SIZE * 0.3)
-	-- Rule and subtitle hang off the wordmark, so they scale with it.
+	-- Rule and subtitle hang off the wordmark, so they scale with it:
+	-- the rule overhangs the word by 8px a side and sits just under the baseline.
 	local ruleWidth = startWidth + 16
 	local ruleY = startY + math.floor(START_SIZE * 0.62)
 
@@ -2976,11 +2989,15 @@ function library:PlayIntro()
 	end
 
 	local finished = false
+	local skipConnection
 	local function finish()
 		if finished then
 			return
 		end
 		finished = true
+		if skipConnection then
+			skipConnection:Disconnect()
+		end
 		self:StopAnimation(logo)
 		self:StopAnimation(rule)
 		self:StopAnimation(subtitle)
@@ -3042,11 +3059,16 @@ function library:PlayIntro()
 			subtitle.TextTransparency = math.max(subtitle.TextTransparency, early)
 		end, cleanup)
 	end
-	overlay.Activated:Connect(finish)
+	local SKIP_KEYS = {[Enum.KeyCode.Escape] = true, [Enum.KeyCode.Return] = true, [Enum.KeyCode.Space] = true}
+	skipConnection = self:AddConnection(inputService.InputBegan, function(input)
+		if isClick(input) or SKIP_KEYS[input.KeyCode] then
+			finish()
+		end
+	end)
 
 	if reduced then
 		self:Animate(logo, 0.25, function(t)
-			overlay.BackgroundTransparency = 1 - 0.55 * t
+			overlay.BackgroundTransparency = 1 - DIM * t
 			logo.TextTransparency = 1 - t
 			rule.BackgroundTransparency = 1 - t
 			subtitle.TextTransparency = 1 - t
@@ -3057,7 +3079,7 @@ function library:PlayIntro()
 
 	-- 1) dim the world and type the brand out
 	self:Animate(logo, 0.45, function(t)
-		overlay.BackgroundTransparency = 1 - 0.55 * math.min(1, t * 1.8)
+		overlay.BackgroundTransparency = 1 - DIM * math.min(1, t * 1.8) -- dim lands first, by 0.25s
 		logo.MaxVisibleGraphemes = math.floor(#self.brand * t + 0.5)
 	end)
 	-- 2) the accent rule draws outward from the center
@@ -3074,7 +3096,8 @@ function library:PlayIntro()
 			subtitle.TextTransparency = 1 - t
 		end)
 	end)
-	-- 4) a beat to read it, then the logo becomes the menu
+	-- 4) a beat to read it, then the logo becomes the menu. The subtitle is
+	-- fully in at 0.7s; ~0.35s more lets it register without feeling like a wait.
 	task.delay(1.05, finish)
 end
 

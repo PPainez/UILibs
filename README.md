@@ -20,7 +20,7 @@ Controls: `AddToggle`, `AddButton`, `AddSlider`, `AddList` (single or `multisele
 
 Built in:
 
-- A splash on execute: the logo types out, then flies into the window title as the menu rises. Click to skip, `library.intro = false` to turn it off. Roblox's Reduced Motion setting gets a plain fade.
+- A splash on execute: the logo types out, then flies into the window title as the menu rises. Click, tap, Escape, Enter or Space skips it (clicks still reach the game). `library.intro = false` turns it off. Roblox's Reduced Motion setting, or `library.reducedMotion = true`, gets a plain fade.
 - Animations (window, tabs, popups, toggles, notifications) driven by RenderStepped, so they work on executors that reject TweenService. Off switch: `library.animations = false`.
 - UI sounds for hover, click, toggle, open/close, tab and notifications. Change ids in `library.sounds`, volume with `library.soundVolume`, off with `library.soundsEnabled = false`.
 - Settings tab with configs, per-place autoload, accent color, background, and the sound/animation switches.
