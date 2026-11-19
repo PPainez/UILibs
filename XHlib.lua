@@ -68,7 +68,7 @@ local TEXT_SIZE = 15
 local library = {
 	__xanhub = true,
 	brand = "xanhub",
-	version = "4.0.1",
+	version = "4.1.0",
 	design = "xanhub",
 	tabs = {},
 	draggable = true,
@@ -101,6 +101,7 @@ local library = {
 	-- Motion below uses library:Animate (RenderStepped), which always works.
 	enableTweens = false,
 	animations = true,
+	intro = true, -- logo intro on Init; set false before Init to skip
 	soundsEnabled = true,
 	soundVolume = 0.35,
 	-- Ids from Morioh-Mini. One asset can serve two kinds at different pitch.
@@ -474,12 +475,13 @@ end
 local soundCache = {}
 local lastSoundAt = {}
 
-function library:PlaySound(kind)
+-- `force` skips the post-load quiet window (the intro's own hand-off sound).
+function library:PlaySound(kind, force)
 	if not self.soundsEnabled or self.unloaded then
 		return
 	end
 	-- Quiet while the menu builds and autoloads, so it does not burst.
-	if not self.readyAt or os.clock() - self.readyAt < 1 then
+	if not force and (not self.readyAt or os.clock() - self.readyAt < 1) then
 		return
 	end
 	local id = self.sounds[kind]
@@ -1712,6 +1714,10 @@ library.createList = function(option, parent)
 				option:Close()
 				return
 			end
+			-- Nothing to choose: the hint in the field already says so.
+			if #option.values == 0 then
+				return
+			end
 			library:PlaySound("click")
 			option.arrow.Rotation = -90
 			fadeColor(outline, "Color", library:GetAccent(), 0.1)
@@ -2871,9 +2877,211 @@ function library:SetOpen(state)
 	return self.open
 end
 
+-- Splash on execute. The brand types out over a dimmed screen with an accent
+-- rule drawing under it, then the logo itself flies into the menu's title
+-- slot as the window rises: the splash becomes the menu instead of fading off.
+-- ~1.5s, click to skip, non-blocking (Init has already returned).
+-- Roblox's Reduced Motion setting gets a still logo and a crossfade instead.
+function library:PlayIntro()
+	local main = self.main
+	if not main then
+		return
+	end
+	if not (self.intro and self.animations) then
+		self:AnimateWindow(true)
+		return
+	end
+
+	local reduced = false
+	pcall(function()
+		reduced = game:GetService("GuiService").ReducedMotionEnabled == true
+	end)
+
+	local overlay = self:Create("TextButton", {
+		ZIndex = 50,
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		Parent = self.base,
+	})
+	if not overlay then
+		self:AnimateWindow(true)
+		return
+	end
+	main.Visible = false
+
+	-- Same face as the window title, so the landing is a seamless swap.
+	local LOGO_FONT = Enum.Font.GothamSemibold
+	local START_SIZE, END_SIZE = 56, 16
+	local screen = self.base.AbsoluteSize
+	local startWidth = textService:GetTextSize(self.brand, START_SIZE, LOGO_FONT, Vector2.new(9e9, 9e9)).X
+	local startLeft = math.floor(screen.X / 2 - startWidth / 2)
+	local startY = math.floor(screen.Y / 2 - START_SIZE * 0.3)
+	-- Rule and subtitle hang off the wordmark, so they scale with it.
+	local ruleWidth = startWidth + 16
+	local ruleY = startY + math.floor(START_SIZE * 0.62)
+
+	local logo = self:Create("TextLabel", {
+		ZIndex = 52,
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.fromOffset(startLeft, startY),
+		Size = UDim2.fromOffset(startWidth + 40, START_SIZE + 10),
+		BackgroundTransparency = 1,
+		Font = LOGO_FONT,
+		TextSize = START_SIZE,
+		TextColor3 = PALETTE.text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		RichText = true,
+		Text = self:FormatBrand(self.brand),
+		MaxVisibleGraphemes = reduced and -1 or 0,
+		TextTransparency = reduced and 1 or 0,
+		Parent = overlay,
+	})
+	local rule = self:Create("Frame", {
+		ZIndex = 51,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0, ruleY),
+		Size = UDim2.fromOffset(reduced and ruleWidth or 0, 2),
+		BackgroundColor3 = self:GetAccent(),
+		BackgroundTransparency = reduced and 1 or 0,
+		BorderSizePixel = 0,
+		Parent = overlay,
+	})
+	-- The script's own title; the version when the script never set one.
+	local subtitleText = tostring(self.title or "")
+	if subtitleText:lower() == self.brand:lower() then
+		subtitleText = "v" .. tostring(self.version)
+	end
+	local subtitle = self:Create("TextLabel", {
+		ZIndex = 51,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, ruleY + 10),
+		Size = UDim2.fromOffset(400, 20),
+		BackgroundTransparency = 1,
+		Font = FONT,
+		TextSize = 16,
+		TextColor3 = PALETTE.textMuted,
+		TextTransparency = 1,
+		Text = subtitleText,
+		Parent = overlay,
+	})
+
+	-- The real title stays hidden until the flying logo lands on it.
+	local title = self.titleLabel
+	if title then
+		title.TextTransparency = 1
+	end
+
+	local finished = false
+	local function finish()
+		if finished then
+			return
+		end
+		finished = true
+		self:StopAnimation(logo)
+		self:StopAnimation(rule)
+		self:StopAnimation(subtitle)
+		logo.MaxVisibleGraphemes = -1
+
+		local function cleanup()
+			if not (title and title.Parent) or title.TextTransparency == 0 then
+				pcall(overlay.Destroy, overlay)
+				return
+			end
+			-- The landed logo covers the brand exactly, so fading the real title
+			-- in beneath it only reveals the rest (" | Example"), with no jump.
+			self:Animate(title, 0.18, function(t)
+				title.TextTransparency = 1 - t
+			end, function()
+				pcall(overlay.Destroy, overlay)
+			end)
+		end
+
+		-- Closed during the intro (menu key), or reduced motion: crossfade out.
+		if reduced or not title or not (self.open and self.main) then
+			if self.open and self.main then
+				self.main.Visible = true
+				if title then title.TextTransparency = 0 end
+				self:PlaySound("open", true)
+			end
+			local fromOverlay = overlay.BackgroundTransparency
+			self:Animate(overlay, 0.25, function(t)
+				overlay.BackgroundTransparency = fromOverlay + (1 - fromOverlay) * t
+				logo.TextTransparency = t
+				rule.BackgroundTransparency = t
+				subtitle.TextTransparency = math.max(subtitle.TextTransparency, t)
+			end, cleanup)
+			return
+		end
+
+		self:AnimateWindow(true, true)
+		self:PlaySound("open", true)
+
+		local fromLeft = logo.Position.X.Offset
+		local fromY = logo.Position.Y.Offset
+		local fromOverlay = overlay.BackgroundTransparency
+		local origin = self.base.AbsolutePosition
+		self:Animate(overlay, 0.42, function(t)
+			-- Re-read the title every frame: the window is still sliding up.
+			local target = title.AbsolutePosition - origin
+			local targetY = target.Y + title.AbsoluteSize.Y / 2
+			local size = START_SIZE + (END_SIZE - START_SIZE) * t
+			logo.TextSize = math.floor(size + 0.5)
+			logo.Size = UDim2.fromOffset(startWidth + 40, math.floor(size) + 10)
+			-- Unrounded so the final frame sits exactly on the title it swaps for.
+			logo.Position = UDim2.fromOffset(
+				fromLeft + (target.X - fromLeft) * t,
+				fromY + (targetY - fromY) * t
+			)
+			local early = math.min(1, t * 2) -- supporting pieces leave first
+			overlay.BackgroundTransparency = fromOverlay + (1 - fromOverlay) * t
+			rule.BackgroundTransparency = early
+			subtitle.TextTransparency = math.max(subtitle.TextTransparency, early)
+		end, cleanup)
+	end
+	overlay.Activated:Connect(finish)
+
+	if reduced then
+		self:Animate(logo, 0.25, function(t)
+			overlay.BackgroundTransparency = 1 - 0.55 * t
+			logo.TextTransparency = 1 - t
+			rule.BackgroundTransparency = 1 - t
+			subtitle.TextTransparency = 1 - t
+		end)
+		task.delay(0.9, finish)
+		return
+	end
+
+	-- 1) dim the world and type the brand out
+	self:Animate(logo, 0.45, function(t)
+		overlay.BackgroundTransparency = 1 - 0.55 * math.min(1, t * 1.8)
+		logo.MaxVisibleGraphemes = math.floor(#self.brand * t + 0.5)
+	end)
+	-- 2) the accent rule draws outward from the center
+	task.delay(0.22, function()
+		if finished then return end
+		self:Animate(rule, 0.35, function(t)
+			rule.Size = UDim2.fromOffset(math.floor(ruleWidth * t + 0.5), 2)
+		end)
+	end)
+	-- 3) the script's title settles in under it
+	task.delay(0.45, function()
+		if finished then return end
+		self:Animate(subtitle, 0.25, function(t)
+			subtitle.TextTransparency = 1 - t
+		end)
+	end)
+	-- 4) a beat to read it, then the logo becomes the menu
+	task.delay(1.05, finish)
+end
+
 -- Open slides up into place; close slides up and hides. The resting position
 -- is remembered so an interrupted animation never leaves the window offset.
-function library:AnimateWindow(state)
+-- `silent` skips the sound when the caller plays its own.
+function library:AnimateWindow(state, silent)
 	local main = self.main
 	local rest = self.windowRest or main.Position
 	self.windowRest = rest
@@ -2888,7 +3096,9 @@ function library:AnimateWindow(state)
 			at(0)
 			self.windowRest = nil
 		end)
-		self:PlaySound("open")
+		if not silent then
+			self:PlaySound("open")
+		end
 	else
 		self:Animate("window", 0.12, function(t)
 			at(-8 * t)
@@ -3362,7 +3572,7 @@ function library:Init()
 		self:TryAutoloadConfig()
 	end)
 	self.readyAt = os.clock()
-	self:AnimateWindow(true)
+	self:PlayIntro()
 	print("[xanhub " .. tostring(self.version) .. "] UI initialized | parent: " .. (self.uiParent and self.uiParent:GetFullName() or "unknown"))
 	return self
 end
