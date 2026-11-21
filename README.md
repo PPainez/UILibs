@@ -22,6 +22,7 @@ Built in:
 
 - A splash on execute: the logo types out, then flies into the window title as the menu rises. Click, tap, Escape, Enter or Space skips it (clicks still reach the game). `library.intro = false` turns it off. Roblox's Reduced Motion setting, or `library.reducedMotion = true`, gets a plain fade.
 - Animations (window, tabs, popups, toggles, notifications) driven by RenderStepped, so they work on executors that reject TweenService. Off switch: `library.animations = false`.
+- The mouse stays free and visible while the menu is open, even in first-person games that lock it every frame. Closing the menu gives the game its cursor back.
 - UI sounds for hover, click, toggle, open/close, tab and notifications. Change ids in `library.sounds`, volume with `library.soundVolume`, off with `library.soundsEnabled = false`.
 - Settings tab with configs, per-place autoload, accent color, background, and the sound/animation switches.
 - `library:SendNotification(seconds, text)`, `library:AddCleanup(fn)`, `library:Unload()`.

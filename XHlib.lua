@@ -68,7 +68,7 @@ local TEXT_SIZE = 15
 local library = {
 	__xanhub = true,
 	brand = "xanhub",
-	version = "4.1.1",
+	version = "4.1.2",
 	design = "xanhub",
 	tabs = {},
 	draggable = true,
@@ -550,9 +550,7 @@ function library:Unload()
 	self.open = false
 	dragging, dragInput, dragObject = false, nil, nil
 
-	pcall(function()
-		inputService.MouseIconEnabled = self.mousestate
-	end)
+	self:SyncCursor(false)
 
 	-- Let enabled features shut themselves off first.
 	for _, option in next, self.options do
@@ -2852,6 +2850,39 @@ function library:SetTabVisible(tab, visible)
 	return true
 end
 
+-- First-person games re-lock and hide the mouse every frame, which beats Modal. While the
+-- menu is open the cursor is freed after all game camera binds; closing restores it.
+local CURSOR_STEP = "XHlibCursor"
+local function freeCursor()
+	inputService.MouseBehavior = Enum.MouseBehavior.Default
+	inputService.MouseIconEnabled = true
+end
+
+function library:SyncCursor(open)
+	pcall(runService.UnbindFromRenderStep, runService, CURSOR_STEP)
+	if self.cursorConnection then
+		self.cursorConnection:Disconnect()
+		self.cursorConnection = nil
+	end
+	if open and not self.unloaded then
+		self.cursorSaved = self.cursorSaved or {icon = inputService.MouseIconEnabled, behavior = inputService.MouseBehavior}
+		runService:BindToRenderStep(CURSOR_STEP, Enum.RenderPriority.Last.Value + 1, function()
+			pcall(freeCursor)
+		end)
+		self.cursorConnection = runService.RenderStepped:Connect(function()
+			pcall(freeCursor)
+		end)
+		pcall(freeCursor)
+	elseif self.cursorSaved then
+		local saved = self.cursorSaved
+		self.cursorSaved = nil
+		pcall(function()
+			inputService.MouseIconEnabled = saved.icon
+			inputService.MouseBehavior = saved.behavior
+		end)
+	end
+end
+
 function library:SetOpen(state)
 	if self.unloaded then return false end
 	state = state == true
@@ -2872,9 +2903,7 @@ function library:SetOpen(state)
 	if self.base then
 		self.base.Enabled = true
 	end
-	pcall(function()
-		inputService.MouseIconEnabled = self.mousestate
-	end)
+	self:SyncCursor(state)
 	return self.open
 end
 
@@ -3562,9 +3591,7 @@ function library:Init()
 		self.base.Enabled = true
 		self.main.Visible = true
 		self.uiParent = self.base.Parent
-		pcall(function()
-			inputService.MouseIconEnabled = self.mousestate
-		end)
+		self:SyncCursor(true)
 	end, traceback)
 
 	self.initializing = false
