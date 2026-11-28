@@ -68,7 +68,7 @@ local TEXT_SIZE = 15
 local library = {
 	__xanhub = true,
 	brand = "xanhub",
-	version = "4.1.2",
+	version = "4.1.3",
 	design = "xanhub",
 	tabs = {},
 	draggable = true,
@@ -3272,6 +3272,23 @@ function library:UpdateWindowLayout(tab)
 	return true
 end
 
+-- Keeps the title bar reachable: the top edge stays on screen and at least 80 px of the window stays in view sideways.
+function library:ClampWindowPosition(position)
+	local main, camera = self.main, workspace.CurrentCamera
+	if not (main and camera and position) then
+		return position
+	end
+	local vp, size, anchor, keep = camera.ViewportSize, main.AbsoluteSize, main.AnchorPoint, 80
+	local left = position.X.Scale * vp.X + position.X.Offset - anchor.X * size.X
+	local top = position.Y.Scale * vp.Y + position.Y.Offset - anchor.Y * size.Y
+	left = math.clamp(left, keep - size.X, math.max(keep - size.X, vp.X - keep))
+	top = math.clamp(top, 0, math.max(0, vp.Y - 40))
+	return UDim2.new(
+		position.X.Scale, left + anchor.X * size.X - position.X.Scale * vp.X,
+		position.Y.Scale, top + anchor.Y * size.Y - position.Y.Scale * vp.Y
+	)
+end
+
 -- Compatibility: the window resizes per axis and never scales uniformly.
 function library:SetMenuScale(_)
 	self:UpdateWindowLayout(self.currentTab)
@@ -3542,6 +3559,9 @@ function library:Init()
 			if camera then
 				self:AddConnection(camera:GetPropertyChangedSignal("ViewportSize"), "ViewportScale", function()
 					self:UpdateWindowLayout(self.currentTab)
+					if self.main and not self.windowRest then
+						self.main.Position = self:ClampWindowPosition(self.main.Position)
+					end
 				end)
 			end
 		end
@@ -3563,7 +3583,7 @@ function library:Init()
 			if dragging and dragObject and self.draggable and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
 				local delta = input.Position - dragStart
 				self:SafeTween(dragObject, TweenInfo.new(0.08, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-					Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, math.max(-36, startPos.Y.Offset + delta.Y)),
+					Position = self:ClampWindowPosition(UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)),
 				})
 			end
 		end)
